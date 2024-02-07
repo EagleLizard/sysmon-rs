@@ -15,40 +15,31 @@ async fn main() -> Result<(), Error> {
 
   let mut sysmon_loop = SysmonLoop::new();
 
-  let unregister_id_1 = sysmon_loop.register(&|| {
-    println!("Registered 1");
+  let unregister_id_1 = sysmon_loop.register(&|loop_count| {
+    if (loop_count % 200) == 0 {
+      println!("Registered 1");
+    }
   });
-  let unregister_id_2 = sysmon_loop.register(&|| {
-    println!("Registered 2");
+  let unregister_id_2 = sysmon_loop.register(&|loop_count| {
+    if (loop_count % 500) == 0 {
+      println!("Registered 2");
+    }
   });
 
-  sysmon_loop.exec();
+  // sysmon_loop.exec(0);
 
-  sysmon_loop.unregister(unregister_id_2);
+  // sysmon_loop.unregister(unregister_id_2);
 
-  sysmon_loop.exec();
+  // sysmon_loop.exec(0);
 
   let loop_future = sysmon_loop.run();
 
-  let wait_ms = Duration::from_millis(100);
-  let task = || async {
-    println!("Async task");
-  };
-
-  let task_future = timeout(wait_ms, async {
-    task().await;
-  });
-
-  task_future.await?;
-
-  evt_loop().await;
-
-  Ok(())
+  loop_future.await
 }
 
 #[derive(Clone)]
 pub struct RegisteredEvent<'a> {
-  fun: &'a (dyn Fn() -> () + Send + Sync),
+  fun: &'a (dyn Fn(u128) -> () + Send + Sync),
   id: u32,
 }
 #[derive(Clone)]
@@ -67,7 +58,7 @@ impl SysmonLoop<'static> {
     };
     sysmonLoop
   }
-  fn register(&mut self, fun: &'static (dyn Fn() -> () + Send + Sync)) -> u32 {
+  fn register(&mut self, fun: &'static (dyn Fn(u128) -> () + Send + Sync)) -> u32 {
     let curr_id = self.id_counter.clone();
     let registered_event = RegisteredEvent {
       fun,
@@ -85,15 +76,15 @@ impl SysmonLoop<'static> {
     let found_idx = self.funs.iter().position(|fun| fun.id == id).unwrap();
     self.funs.remove(found_idx);
   }
-  fn exec(&self)  {
+  fn exec(&self, loop_count: u128)  {
     self.funs.iter().for_each(|f| {
-      (f.fun)();
+      (f.fun)(loop_count);
     })
   }
-  async fn run(&'static mut self) {
+  async fn run(self) -> Result<(), Error> {
     let start_ms = SystemTime::now();
     let mut loop_count: u128 = 0;
-    let mut interval = time::interval(Duration::from_micros(2000));
+    let mut interval = time::interval(Duration::from_micros(1000));
     let loop_fun = async move {
       loop {
         interval.tick().await;
@@ -103,11 +94,11 @@ impl SysmonLoop<'static> {
           println!("elapsed: {:?}", elapsed.unwrap());
         }
         loop_count = loop_count + 1;
-        self.exec();
+        self.exec(loop_count);
       }
     };
     let loop_run =  task::spawn(loop_fun);
-    loop_run.await;
+    loop_run.await?
   }
 }
 

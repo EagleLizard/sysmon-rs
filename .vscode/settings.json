@@ -1,0 +1,8 @@
+{
+  "files.autoSave": "afterDelay",
+  "files.autoSaveDelay": 20,
+  // "files.associations": {
+  //   "*.ejs": "html",
+  //   "*.tsx": "typescriptreact",
+  // }
+}

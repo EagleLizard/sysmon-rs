@@ -28,6 +28,8 @@ async fn main() -> Result<(), Error> {
 
   sysmon_loop.exec();
 
+  let loop_future = sysmon_loop.run();
+
   let wait_ms = Duration::from_millis(100);
   let task = || async {
     println!("Async task");
@@ -44,13 +46,14 @@ async fn main() -> Result<(), Error> {
   Ok(())
 }
 
-
+#[derive(Clone)]
 pub struct RegisteredEvent<'a> {
-  fun: &'a dyn Fn() -> (),
+  fun: &'a (dyn Fn() -> () + Send + Sync),
   id: u32,
 }
+#[derive(Clone)]
 pub struct SysmonLoop<'a> {
-  interval: Interval,
+  // interval: Interval,
   funs: Vec<RegisteredEvent<'a>>,
   id_counter: u32,
 }
@@ -58,13 +61,13 @@ pub struct SysmonLoop<'a> {
 impl SysmonLoop<'static> {
   fn new() -> SysmonLoop<'static> {
     let sysmonLoop = SysmonLoop {
-      interval: time::interval(Duration::from_micros(2000)),
+      // interval: time::interval(Duration::from_micros(2000)),
       funs: vec![],
       id_counter: 0,
     };
     sysmonLoop
   }
-  fn register(&mut self, fun: &'static dyn Fn() -> ()) -> u32 {
+  fn register(&mut self, fun: &'static (dyn Fn() -> () + Send + Sync)) -> u32 {
     let curr_id = self.id_counter.clone();
     let registered_event = RegisteredEvent {
       fun,
@@ -86,6 +89,25 @@ impl SysmonLoop<'static> {
     self.funs.iter().for_each(|f| {
       (f.fun)();
     })
+  }
+  async fn run(&'static mut self) {
+    let start_ms = SystemTime::now();
+    let mut loop_count: u128 = 0;
+    let mut interval = time::interval(Duration::from_micros(2000));
+    let loop_fun = async move {
+      loop {
+        interval.tick().await;
+        let elapsed = SystemTime::now().duration_since(start_ms);
+        if (loop_count % 1000) == 0 {
+          println!("loop_count: {:?}", loop_count);
+          println!("elapsed: {:?}", elapsed.unwrap());
+        }
+        loop_count = loop_count + 1;
+        self.exec();
+      }
+    };
+    let loop_run =  task::spawn(loop_fun);
+    loop_run.await;
   }
 }
 

@@ -1,14 +1,102 @@
 
-use std::time::{Duration, Instant, SystemTime};
+mod sysmon_loop;
+mod util;
+mod cli_args;
 
-use mini_redis::{client, cmd::Unknown, Error};
+use std::{collections::{HashSet, VecDeque}, fs::{self, canonicalize, DirEntry}, path::{Path, PathBuf}, time::Duration, vec};
+
+use clap::Parser;
+use mini_redis::Error;
 use sysinfo::{
     Components, Disks, Networks, System,
 };
-use tokio::{task::{self, JoinError}, time::{self, sleep, timeout, Interval, Sleep}};
+// use sysmon_loop::sysmon_loop::SysmonLoop;
+use tokio::time::timeout;
+use util::timer::Timer;
 
-#[tokio::main]
-async fn main() -> Result<(), Error> {
+
+use crate::{cli_args::cli_args::{CliArgs, SysmonCli}, sysmon_loop::sysmon_loop::SysmonLoop};
+
+// #[tokio::main]
+// async fn main() -> Result<(), Error> {
+fn main() {
+  // let cli_args = SysmonCli::parse();
+  // println!("cli_args:\n{:#?}", cli_args);
+  // let sysmon_cli = SysmonCli::parse();
+  // println!("sysmon_cli:\n{:#?}", sysmon_cli);
+  let SysmonCli::Scandir(scan_dir_args) = SysmonCli::parse();
+  println!("scan_dir_args:\n{:#?}", scan_dir_args);
+  
+  let scan_dir_path = dirs::home_dir().unwrap().join("repos").join("ezd-web");
+  let scan_dir_path = PathBuf::new().join(scan_dir_args.dirname);
+  println!("Walking dir: {:#?}", scan_dir_path);
+  let walk_timer = Timer::start();
+  let walk_dir_res = walk_dir(scan_dir_path.as_path());
+  let walk_ms = walk_timer.stop();
+  println!("files: {}", walk_dir_res.files.len());
+  println!("dirs: {}", walk_dir_res.dirs.len());
+  println!("Walk took: {:#?}", walk_ms);
+  
+
+  // let res = sysmon_loop_test().await;
+  // Ok(())
+}
+
+struct WalkDirResult {
+  files: Vec<PathBuf>,
+  dirs: Vec<PathBuf>,
+}
+
+fn walk_dir(path: &Path) -> WalkDirResult {
+  let root_paths = fs::read_dir(path).unwrap();
+  // let mut next_dirs: Vec<DirEntry> = vec![];
+  let mut path_queue: VecDeque<PathBuf> = VecDeque::new();
+  for path_res in root_paths {
+    // let path = path_res.unwrap().path();
+    path_queue.push_back(canonicalize(path_res.unwrap().path()).unwrap());
+  }
+
+  let mut all_dirs: Vec<PathBuf> = vec![];
+  let mut all_files: Vec<PathBuf> = vec![];
+
+  let mut visited_dirs: HashSet<String> = HashSet::new();
+  // for root_path in path_queue.clone() {
+  //   visited_dirs.insert(root_path.display().to_string());
+  // }
+
+  while path_queue.len() > 0 {
+    // println!("{}", path_queue.front().unwrap().display());
+
+    // let dir_path = canonicalize(path_queue.pop_front().unwrap()).unwrap();
+    let dir_path = path_queue.pop_front().unwrap();
+    // if visited_dirs.contains(&dir_path.clone().display().to_string()) {
+    //   println!("{}", dir_path.clone().display());
+    //   continue;
+    // } else {
+    //   visited_dirs.insert(dir_path.clone().display().to_string());
+    // }
+    let is_dir = dir_path.is_dir();
+    if is_dir {
+      let subdirs = fs::read_dir(dir_path.clone()).unwrap();
+      all_dirs.push(dir_path);
+      for subdir in subdirs {
+        path_queue.push_back(subdir.unwrap().path());
+      }
+    } else {
+      all_files.push(dir_path); 
+    }
+  }
+  // for file_entry in all_files {
+  //   println!("{}", file_entry.display());
+  // }
+  WalkDirResult {
+    files: all_files,
+    dirs: all_dirs,
+  }
+}
+
+
+async fn sysmon_loop_test() -> Result<(), Error> {
   println!("Hello, world!");
   
   sysmon_test();
@@ -16,109 +104,38 @@ async fn main() -> Result<(), Error> {
   let mut sysmon_loop = SysmonLoop::new();
 
   let unregister_id_1 = sysmon_loop.register(&|loop_count| {
-    if (loop_count % 200) == 0 {
+    if (loop_count % 2000) == 0 {
       println!("Registered 1");
     }
   });
   let unregister_id_2 = sysmon_loop.register(&|loop_count| {
-    if (loop_count % 500) == 0 {
+    if (loop_count % 5000) == 0 {
       println!("Registered 2");
     }
   });
 
-  // sysmon_loop.exec(0);
+  // sysmon_loop.register(&|loop_count| {
+  //   if (loop_count % 10000) == 0 {
+  //     sysmon_test();
+  //   }
+  // });
 
-  // sysmon_loop.unregister(unregister_id_2);
-
-  // sysmon_loop.exec(0);
+  // {
+  //   let dereg_timeout_fn = async {
+  //     sysmon_loop.unregister(unregister_id_1);
+  //   };
+  //   let dereg_future = timeout(Duration::from_millis(5000), dereg_timeout_fn);
+  //   let res = dereg_future.await;
+  // }
 
   let loop_future = sysmon_loop.run();
 
-  loop_future.await
-}
 
-#[derive(Clone)]
-pub struct RegisteredEvent<'a> {
-  fun: &'a (dyn Fn(u128) -> () + Send + Sync),
-  id: u32,
-}
-#[derive(Clone)]
-pub struct SysmonLoop<'a> {
-  // interval: Interval,
-  funs: Vec<RegisteredEvent<'a>>,
-  id_counter: u32,
-}
-
-impl SysmonLoop<'static> {
-  fn new() -> SysmonLoop<'static> {
-    let sysmonLoop = SysmonLoop {
-      // interval: time::interval(Duration::from_micros(2000)),
-      funs: vec![],
-      id_counter: 0,
-    };
-    sysmonLoop
-  }
-  fn register(&mut self, fun: &'static (dyn Fn(u128) -> () + Send + Sync)) -> u32 {
-    let curr_id = self.id_counter.clone();
-    let registered_event = RegisteredEvent {
-      fun,
-      id: curr_id,
-    };
-    self.id_counter = self.id_counter + 1;
-    self.funs.push(registered_event);
-    // let unregister_fun = move || {
-    //   self.unregister(currId)
-    // };
-    // unregister_fun
-    return curr_id;
-  }
-  fn unregister(&mut self, id: u32) {
-    let found_idx = self.funs.iter().position(|fun| fun.id == id).unwrap();
-    self.funs.remove(found_idx);
-  }
-  fn exec(&self, loop_count: u128)  {
-    self.funs.iter().for_each(|f| {
-      (f.fun)(loop_count);
-    })
-  }
-  async fn run(self) -> Result<(), Error> {
-    let start_ms = SystemTime::now();
-    let mut loop_count: u128 = 0;
-    let mut interval = time::interval(Duration::from_micros(1000));
-    let loop_fun = async move {
-      loop {
-        interval.tick().await;
-        let elapsed = SystemTime::now().duration_since(start_ms);
-        if (loop_count % 1000) == 0 {
-          println!("loop_count: {:?}", loop_count);
-          println!("elapsed: {:?}", elapsed.unwrap());
-        }
-        loop_count = loop_count + 1;
-        self.exec(loop_count);
-      }
-    };
-    let loop_run =  task::spawn(loop_fun);
-    loop_run.await?
-  }
-}
-
-async fn evt_loop() -> Result<(), JoinError> {
-  let start_ms = SystemTime::now();
-  let mut loop_count: u128 = 0;
-  let main_loop = task::spawn(async move {
-    // let mut interval = time::interval(Duration::from_micros(500));
-    let mut interval = time::interval(Duration::from_micros(2000));
-    loop {
-      interval.tick().await;
-      let elapsed = SystemTime::now().duration_since(start_ms);
-      if (loop_count % 1000) == 0 {
-        println!("loop_count: {:?}", loop_count);
-        println!("elapsed: {:?}", elapsed.unwrap());
-      }
-      loop_count = loop_count + 1;
-    }
-  });
-  main_loop.await
+  let loop_future_result = match loop_future.await {
+    Ok(res) => res,
+    Err(error) => panic!("{:?}", error),
+  };
+  Ok(loop_future_result)
 }
 
 fn sysmon_test() {
@@ -172,5 +189,3 @@ fn sysmon_test() {
       println!("{component:?}");
   }
 }
-
-

@@ -3,7 +3,7 @@ mod sysmon_loop;
 mod util;
 mod cli_args;
 
-use std::{collections::{HashSet, VecDeque}, fs::{self, canonicalize, symlink_metadata, DirEntry}, io, path::{Path, PathBuf}, time::Duration, vec};
+use std::{collections::{HashSet, VecDeque}, fs::{self, canonicalize, symlink_metadata, DirEntry}, io::{self, Write}, path::{Path, PathBuf}, time::Duration, vec};
 
 use clap::Parser;
 use mini_redis::Error;
@@ -69,6 +69,8 @@ fn walk_dir(path: &PathBuf) -> WalkDirResult {
   let mut all_dirs: Vec<PathBuf> = vec![];
   let mut all_files: Vec<PathBuf> = vec![];
 
+  let mut path_count: u32 = 0;
+
   while path_queue.len() > 0 {
     let dir_path = path_queue.pop_front().unwrap();
     let is_dir = dir_path.is_dir();
@@ -76,7 +78,7 @@ fn walk_dir(path: &PathBuf) -> WalkDirResult {
       let meta = symlink_metadata(dir_path.as_path()).unwrap();
       let mut is_loop = false;
       if meta.is_symlink() {
-        println!("symlink: {}", dir_path.display());
+        // println!("symlink: {}", dir_path.display());
         is_loop = true;
       }
       // let is_loop = contains_loop(dir_path.clone());
@@ -87,11 +89,19 @@ fn walk_dir(path: &PathBuf) -> WalkDirResult {
           let subdir = subdir_res.unwrap();
           path_queue.push_back(subdir.path());
         }
+        path_count += 1;
       };
     } else {
       all_files.push(dir_path); 
+      path_count += 1;
+    }
+
+    if (path_count % 1e4 as u32) == 0 {
+      print!(".");
+      std::io::stdout().flush().unwrap();
     }
   }
+  println!("");
 
   WalkDirResult {
     files: all_files,

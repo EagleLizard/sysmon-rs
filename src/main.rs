@@ -3,7 +3,7 @@ mod sysmon_loop;
 mod util;
 mod cli_args;
 
-use std::{collections::{HashSet, VecDeque}, fs::{self, canonicalize, DirEntry}, io, path::{Path, PathBuf}, time::Duration, vec};
+use std::{collections::{HashSet, VecDeque}, fs::{self, canonicalize, symlink_metadata, DirEntry}, io, path::{Path, PathBuf}, time::Duration, vec};
 
 use clap::Parser;
 use mini_redis::Error;
@@ -34,13 +34,18 @@ fn main() {
   let walk_timer = Timer::start();
   let walk_dir_res = walk_dir(&scan_dir_path);
   let walk_ms = walk_timer.stop();
-  println!("files: {}", walk_dir_res.files.len());
-  println!("dirs: {}", walk_dir_res.dirs.len());
-  println!("Walk took: {:#?}", walk_ms);
   
   // for dir in walk_dir_res.dirs {
   //   println!("{}", dir.display());
   // }
+  // for file in walk_dir_res.files.clone() {
+  //   println!("{}", file.display());
+  // }
+
+  println!("files: {}", walk_dir_res.files.len());
+  println!("dirs: {}", walk_dir_res.dirs.len());
+  println!("Walk took: {:#?}", walk_ms);
+  
   // let res = sysmon_loop_test().await;
   // Ok(())
 }
@@ -68,7 +73,13 @@ fn walk_dir(path: &PathBuf) -> WalkDirResult {
     let dir_path = path_queue.pop_front().unwrap();
     let is_dir = dir_path.is_dir();
     if is_dir {
-      let is_loop = contains_loop(dir_path.clone());
+      let meta = symlink_metadata(dir_path.as_path()).unwrap();
+      let mut is_loop = false;
+      if meta.is_symlink() {
+        println!("symlink: {}", dir_path.display());
+        is_loop = true;
+      }
+      // let is_loop = contains_loop(dir_path.clone());
       if !is_loop {
         let subdirs = fs::read_dir(dir_path.clone()).unwrap();
         all_dirs.push(dir_path);

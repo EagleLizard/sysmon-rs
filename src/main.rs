@@ -3,10 +3,11 @@ mod sysmon_loop;
 mod util;
 mod cli_args;
 
-use std::{collections::{HashSet, VecDeque}, fs::{self, canonicalize, DirEntry}, path::{Path, PathBuf}, time::Duration, vec};
+use std::{collections::{HashSet, VecDeque}, fs::{self, canonicalize, DirEntry}, io, path::{Path, PathBuf}, time::Duration, vec};
 
 use clap::Parser;
 use mini_redis::Error;
+use same_file::is_same_file;
 use sysinfo::{
     Components, Disks, Networks, System,
 };
@@ -37,7 +38,9 @@ fn main() {
   println!("dirs: {}", walk_dir_res.dirs.len());
   println!("Walk took: {:#?}", walk_ms);
   
-
+  // for dir in walk_dir_res.dirs {
+  //   println!("{}", dir.display());
+  // }
   // let res = sysmon_loop_test().await;
   // Ok(())
 }
@@ -48,13 +51,15 @@ struct WalkDirResult {
 }
 
 fn walk_dir(path: &PathBuf) -> WalkDirResult {
-  let root_paths = fs::read_dir(path).unwrap();
+  // let root_paths = fs::read_dir(path).unwrap();
   // let mut next_dirs: Vec<DirEntry> = vec![];
   let mut path_queue: VecDeque<PathBuf> = VecDeque::new();
-  for path_res in root_paths {
-    // let path = path_res.unwrap().path();
-    path_queue.push_back(canonicalize(path_res.unwrap().path()).unwrap());
-  }
+  // for path_res in root_paths {
+  //   // let path = path_res.unwrap().path();
+  //   // path_queue.push_back(canonicalize(path_res.unwrap().path()).unwrap());
+  //   path_queue.push_back(path_res.unwrap().path());
+  // }
+  path_queue.push_back(path.to_path_buf());
 
   let mut all_dirs: Vec<PathBuf> = vec![];
   let mut all_files: Vec<PathBuf> = vec![];
@@ -63,12 +68,15 @@ fn walk_dir(path: &PathBuf) -> WalkDirResult {
     let dir_path = path_queue.pop_front().unwrap();
     let is_dir = dir_path.is_dir();
     if is_dir {
-      let subdirs = fs::read_dir(dir_path.clone()).unwrap();
-      all_dirs.push(dir_path);
-      for subdir_res in subdirs {
-        let subdir = subdir_res.unwrap();
-        path_queue.push_back(subdir.path());
-      }
+      let is_loop = contains_loop(dir_path.clone());
+      if !is_loop {
+        let subdirs = fs::read_dir(dir_path.clone()).unwrap();
+        all_dirs.push(dir_path);
+        for subdir_res in subdirs {
+          let subdir = subdir_res.unwrap();
+          path_queue.push_back(subdir.path());
+        }
+      };
     } else {
       all_files.push(dir_path); 
     }
@@ -78,6 +86,18 @@ fn walk_dir(path: &PathBuf) -> WalkDirResult {
     files: all_files,
     dirs: all_dirs,
   }
+}
+
+fn contains_loop<P: AsRef<Path>>(path: P) -> bool {
+  let path = path.as_ref();
+  let mut path_buf = path.to_path_buf();
+  while path_buf.pop() {
+    let same_dir = is_same_file(&path_buf, path).unwrap();
+    if same_dir {
+      return true;
+    }
+  }
+  false
 }
 
 

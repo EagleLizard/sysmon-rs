@@ -31,7 +31,7 @@ fn main() {
   let scan_dir_path = PathBuf::new().join(scan_dir_args.dirname);
   println!("Walking dir: {:#?}", scan_dir_path);
   let walk_timer = Timer::start();
-  let walk_dir_res = walk_dir(scan_dir_path.as_path());
+  let walk_dir_res = walk_dir(&scan_dir_path);
   let walk_ms = walk_timer.stop();
   println!("files: {}", walk_dir_res.files.len());
   println!("dirs: {}", walk_dir_res.dirs.len());
@@ -47,7 +47,7 @@ struct WalkDirResult {
   dirs: Vec<PathBuf>,
 }
 
-fn walk_dir(path: &Path) -> WalkDirResult {
+fn walk_dir(path: &PathBuf) -> WalkDirResult {
   let root_paths = fs::read_dir(path).unwrap();
   // let mut next_dirs: Vec<DirEntry> = vec![];
   let mut path_queue: VecDeque<PathBuf> = VecDeque::new();
@@ -59,36 +59,21 @@ fn walk_dir(path: &Path) -> WalkDirResult {
   let mut all_dirs: Vec<PathBuf> = vec![];
   let mut all_files: Vec<PathBuf> = vec![];
 
-  let mut visited_dirs: HashSet<String> = HashSet::new();
-  // for root_path in path_queue.clone() {
-  //   visited_dirs.insert(root_path.display().to_string());
-  // }
-
   while path_queue.len() > 0 {
-    // println!("{}", path_queue.front().unwrap().display());
-
-    // let dir_path = canonicalize(path_queue.pop_front().unwrap()).unwrap();
     let dir_path = path_queue.pop_front().unwrap();
-    // if visited_dirs.contains(&dir_path.clone().display().to_string()) {
-    //   println!("{}", dir_path.clone().display());
-    //   continue;
-    // } else {
-    //   visited_dirs.insert(dir_path.clone().display().to_string());
-    // }
     let is_dir = dir_path.is_dir();
     if is_dir {
       let subdirs = fs::read_dir(dir_path.clone()).unwrap();
       all_dirs.push(dir_path);
-      for subdir in subdirs {
-        path_queue.push_back(subdir.unwrap().path());
+      for subdir_res in subdirs {
+        let subdir = subdir_res.unwrap();
+        path_queue.push_back(subdir.path());
       }
     } else {
       all_files.push(dir_path); 
     }
   }
-  // for file_entry in all_files {
-  //   println!("{}", file_entry.display());
-  // }
+
   WalkDirResult {
     files: all_files,
     dirs: all_dirs,

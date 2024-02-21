@@ -16,3 +16,4 @@ mini-redis = "0.4"
 dirs = "5.0.1"
 clap = { version = "4.5.1", features = ["derive"] }
 same-file = "1.0.6"
+sha2 = "0.10.8"

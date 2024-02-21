@@ -2,12 +2,14 @@
 mod sysmon_loop;
 mod util;
 mod cli_args;
+mod config;
 
-use std::{collections::{HashSet, VecDeque}, fs::{self, canonicalize, symlink_metadata, DirEntry}, io::{self, Write}, path::{Path, PathBuf}, time::Duration, vec};
+use std::{collections::{HashSet, VecDeque}, fs::{self, canonicalize, create_dir, symlink_metadata, DirEntry, File}, io::{self, BufReader, Read, Write}, path::{Path, PathBuf}, time::Duration, vec};
 
 use clap::Parser;
 use mini_redis::Error;
 use same_file::is_same_file;
+use sha2::{Sha256, Digest};
 use sysinfo::{
     Components, Disks, Networks, System,
 };
@@ -16,7 +18,7 @@ use tokio::time::timeout;
 use util::timer::Timer;
 
 
-use crate::{cli_args::cli_args::{CliArgs, SysmonCli}, sysmon_loop::sysmon_loop::SysmonLoop};
+use crate::{cli_args::cli_args::{CliArgs, SysmonCli}, config::constants::get_data_dir_path, sysmon_loop::sysmon_loop::SysmonLoop};
 
 // #[tokio::main]
 // async fn main() -> Result<(), Error> {
@@ -45,9 +47,60 @@ fn main() {
   println!("files: {}", walk_dir_res.files.len());
   println!("dirs: {}", walk_dir_res.dirs.len());
   println!("Walk took: {:#?}", walk_ms);
+
   
+  let data_dir_path = get_data_dir_path();
+
+  let data_dir_path_exists = data_dir_path.exists();
+  if !data_dir_path_exists {
+    let _ = create_dir(data_dir_path.clone()).unwrap();
+  }
+
+  let mut file_data: String = String::new();
+  for file_path_buf in walk_dir_res.files {
+    file_data.push_str(file_path_buf.display().to_string().as_str());
+    file_data.push_str("\n");
+  }
+
+  let file_data_path = data_dir_path.clone().join(Path::new("files.txt"));
+
+  let _ = fs::write(file_data_path, file_data).unwrap();
+
+  let mut dir_data: String = String::new();
+  for dir_path_buf in walk_dir_res.dirs {
+    dir_data.push_str(dir_path_buf.display().to_string().as_str());
+    dir_data.push_str("\n");
+  }
+
+  let dir_data_path = data_dir_path.clone().join(Path::new("dirs.txt"));
+
+  let _ = fs::write(dir_data_path, dir_data).unwrap();
+  
+
+  
+  // let file_path_buf = walk_dir_res.files.last().unwrap();
+  // println!("{}", file_path_buf.display());
+  // println!("{}", hash);
+  
+
   // let res = sysmon_loop_test().await;
   // Ok(())
+}
+
+fn get_file_hash(file_path: String) -> String {
+  let mut file = File::open(file_path).unwrap();
+  let mut hasher = Sha256::new();
+  let mut buffer = [0; 4096];
+  loop {
+    let bytes_read = file.read(&mut buffer).unwrap();
+    if bytes_read == 0 {
+      break;
+    }
+    hasher.update(&buffer[..bytes_read]);
+  }
+
+  let hash = format!("{:x}", hasher.finalize());
+  hash
 }
 
 struct WalkDirResult {
@@ -79,11 +132,10 @@ fn walk_dir(path: &PathBuf) -> WalkDirResult {
       let mut is_loop = false;
       if meta.is_symlink() {
         // println!("symlink: {}", dir_path.display());
-        is_loop = true;
+        is_loop = contains_loop(dir_path.as_path());
       }
-      // let is_loop = contains_loop(dir_path.clone());
       if !is_loop {
-        let subdirs = fs::read_dir(dir_path.clone()).unwrap();
+        let subdirs = fs::read_dir(dir_path.as_path()).unwrap();
         all_dirs.push(dir_path);
         for subdir_res in subdirs {
           let subdir = subdir_res.unwrap();
